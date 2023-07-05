@@ -1,0 +1,85 @@
+#función de optimiza el ConTSP sin tiempos de espera para k periodos y con probabilidad de requirimiento de servicio p en cada periodo
+#Parametros de entrada:
+#D= matriz distancia
+#T=matriz de tiempos 
+#nod=matriz con las coordenadas de los nodos
+#S= valor de la M grande
+#k= número de periodos
+#L= constante de consistencia 
+#p = probabilidad de requerimiento de servicio
+#Devuelve el tour 
+using JuMP
+using Gurobi
+using Random
+using TSPLIB
+
+using Compose
+using Cairo
+using Colors
+using Graphs
+using GraphPlot
+
+function solconTSP(D,T,nod,S,K,L,p)
+    Nloc=size(D)[1];
+    println(Nloc)
+    M=10000;
+    #se generan K vectores con los clientes a los que se presta servicio en cada periodo y K con el nodo 1 
+    rng = Random.seed!(1234);
+    Vk=[randsubseq(rng,2:Nloc, p) for i=1:K];
+	Vk0=deepcopy(Vk);
+	for i=1:K
+	    push!(Vk[i],1)
+	    sort!(Vk[i])
+	end
+	print("Vk0: ",Vk0, "\n")
+	
+	print("Vk:",Vk)
+
+    model = Model(Gurobi.Optimizer)
+    #variables
+    @variable(model,x[1:Nloc,1:Nloc,1:K],binary=true)
+	@variable(model,0<=u[1:Nloc,1:K])
+
+    #función objetivo min costes
+	@objective(model,Min,sum(sum(sum(D[i,j]*x[i,j,k] for j=1:Nloc) for i=1:Nloc) for k=1:K))
+    #restricciones
+    @constraint(model,[k=1:K,i in Vk[k]],sum(x[i,j,k] for j in Vk[k] if i!=j )==1 )
+	@constraint(model,[k=1:K,i in Vk[k]],sum(x[j,i,k] for j in Vk[k] if i!=j )==1 )
+	
+	@constraint(model,[k=1:K,j in Vk0[k], i in Vk[k];i!=j],u[j,k]>=u[i,k]+T[i,j]*x[i,j,k]-M*(1-x[i,j,k]))
+	@constraint(model,[k=1:K,j in Vk0[k], i in Vk[k];i!=j],u[j,k]<=u[i,k]+T[i,j]*x[i,j,k]+M*(1-x[i,j,k]))
+	@constraint(model,[k=1:K,l=1:K,i in intersect(Vk[k],Vk[l]) ;k!=l ], u[i,k]-u[i,l]<=L )
+	
+    optimize!(model);
+    println("tiene solucion:",has_values(model))
+    println("valor:",objective_value(model))
+    println("tiempo de busqueda de solución:" ,solve_time(model))
+
+
+    g= [SimpleDiGraph(Nloc) for i=1:K] # graph 
+    nodelab = 1:nv(g[1])
+    locsx = [nod[i,1] for i=1:Nloc ]
+    locsy = [nod[i,2] for i=1:Nloc ]
+
+    
+    membership = [1 for i=1:Nloc]
+    nodecolor = [colorant"skyblue", colorant"orange"]
+
+    membership[1]=2
+    nodefil = nodecolor[membership]
+
+    c="123456789ABCD..."
+    p=".png"
+
+    for k=1:K
+      for i in Vk[k]
+        for j in Vk[k]
+            if 0.9<=value(x[i,j,k])<=1.1
+              add_edge!(g[k], i, j)
+            end
+        end 
+        h=gplot(g[k],locsx, locsy,nodefillc=nodefil,nodelabel=nodelab)
+        draw(PNG(c[k]*p, 18cm, 18cm),h)
+        end
+    end
+end
